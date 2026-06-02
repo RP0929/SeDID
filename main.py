@@ -2,19 +2,23 @@ import copy
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import warnings
 from absl import app, flags
 import torch
-from tensorboardX import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ModuleNotFoundError:
+    from tensorboardX import SummaryWriter
 import torchvision
 from torchvision.datasets import CIFAR10, CIFAR100, CelebA, SVHN
 from torchvision.utils import make_grid, save_image
 from torchvision import transforms
 from tqdm import trange
 from mia_evals.dataset_utils import MIACelebA, MIACIFAR10, MIACIFAR100, MIASVHN, MIASTL10, MIAImageFolder
-from diffusion import GaussianDiffusionTrainer, GaussianDiffusionSampler
+from mia_evals.diffusion import GaussianDiffusionTrainer, GaussianDiffusionSampler
 from mia_evals.model import UNet
 from mia_evals.score.both import get_inception_and_fid_score
 
@@ -22,6 +26,7 @@ from mia_evals.score.both import get_inception_and_fid_score
 
 
 FLAGS = flags.FLAGS
+PROJECT_ROOT = Path(__file__).resolve().parent
 flags.DEFINE_bool('train', False, help='train from scratch')
 flags.DEFINE_bool('eval', False, help='load ckpt.pt and evaluate FID and IS')
 # UNet
@@ -34,7 +39,7 @@ flags.DEFINE_float('dropout', 0.1, help='dropout rate of resblock')
 flags.DEFINE_float('beta_1', 1e-4, help='start beta value')
 flags.DEFINE_float('beta_T', 0.02, help='end beta value')
 flags.DEFINE_integer('T', 1000, help='total diffusion steps')
-flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon'], help='predict variable')
+flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon', 'eps_xt_xt-1'], help='predict variable')
 flags.DEFINE_enum('var_type', 'fixedlarge', ['fixedlarge', 'fixedsmall'], help='variance type')
 # Training
 flags.DEFINE_float('lr', 2e-4, help='target learning rate')
@@ -48,7 +53,7 @@ flags.DEFINE_float('ema_decay', 0.9999, help="ema decay rate")
 flags.DEFINE_bool('parallel', True, help='multi gpu training')
 
 flags.DEFINE_string('dataset', 'CIFAR10', help='data set')
-flags.DEFINE_string('dataset_root', '/home/mrp_929/projects/SeDID/datasets', help='data set')
+flags.DEFINE_string('dataset_root', str(PROJECT_ROOT / 'datasets'), help='dataset root directory')
 # Logging & Sampling
 flags.DEFINE_string('logdir', './logs/DDPM_CIFAR10_EPS', help='log directory')
 flags.DEFINE_integer('sample_size', 64, "sampling size of images")
@@ -62,7 +67,7 @@ flags.DEFINE_string('fid_cache', './stats/cifar10.train.npz', help='FID cache')
 flags.DEFINE_string('defense', None, help='Defense tricks, e.g., DP-SGD or L2 Regularizationgg')
 flags.DEFINE_bool('only_member', False, help='Training only on member split')
 
-device = torch.device('cuda:0')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def ema(source, target, decay):
@@ -86,6 +91,7 @@ def warmup_lr(step):
 
 def evaluate(sampler, model, save_path, ckpt_name):
     model.eval()
+    os.makedirs(save_path, exist_ok=True)
     with torch.no_grad():
         images = []
         desc = "generating images"
@@ -288,8 +294,9 @@ def train():
 
             # evaluate
             if FLAGS.eval_step > 0 and step % FLAGS.eval_step == 0:
-                net_IS, net_FID, _ = evaluate(net_sampler, net_model)
-                ema_IS, ema_FID, _ = evaluate(ema_sampler, ema_model)
+                eval_dir = os.path.join(FLAGS.logdir, 'eval_samples')
+                net_IS, net_FID, _ = evaluate(net_sampler, net_model, eval_dir, f'net-step{step}')
+                ema_IS, ema_FID, _ = evaluate(ema_sampler, ema_model, eval_dir, f'ema-step{step}')
                 metrics = {
                     'IS': net_IS[0],
                     'IS_std': net_IS[1],

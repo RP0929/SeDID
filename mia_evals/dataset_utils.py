@@ -1,17 +1,20 @@
 import glob
 import os
-import sys
-# print(sys.path)
-sys.path.append('.')
+from pathlib import Path
 
 import torch
 import torchvision.datasets
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,Subset
 #from DiffusionDetect.score import fid
-from score import fid
+from mia_evals.score import fid
 from torchvision.datasets import CIFAR10, CIFAR100, CelebA, SVHN
 from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MIA_EVALS_ROOT = Path(__file__).resolve().parent
+DEFAULT_DATASET_ROOT = PROJECT_ROOT / 'datasets'
+DEFAULT_MEMBER_SPLIT_ROOT = MIA_EVALS_ROOT / 'member_splits'
 
 class ReconsDataset(torch.utils.data.Dataset):
 
@@ -242,10 +245,10 @@ def prepare_generated_dataset(checkpoint_path, output_folder, transforms,nums=50
     return generated_dataset
 
 def load_member_data(dataset_name, batch_size=128, shuffle=False, randaugment=False):
-    member_split_root = '/home/mrp_929/projects/SeDID/mia_evals/member_splits'
-    dataset_root = '/home/mrp_929/projects/data'
+    member_split_root = Path(os.environ.get('SEDID_MEMBER_SPLIT_ROOT', DEFAULT_MEMBER_SPLIT_ROOT))
+    dataset_root = Path(os.environ.get('SEDID_DATASET_ROOT', DEFAULT_DATASET_ROOT))
     if dataset_name.upper() == 'CIFAR10':
-        splits = np.load(os.path.join(member_split_root, 'CIFAR10_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'CIFAR10_train_ratio0.5.npz')
         # member_idxs = splits['mia_train_idxs']
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
@@ -256,34 +259,42 @@ def load_member_data(dataset_name, batch_size=128, shuffle=False, randaugment=Fa
         else:
             transforms = torchvision.transforms.Compose([
                 torchvision.transforms.ToTensor()])
-        member_set = CIFAR10(root=os.path.join(dataset_root, 'cifar10'), train=True,download=True,
+        member_set = CIFAR10(root=str(dataset_root / 'cifar10'), train=True,download=True,
                                 transform=transforms)
-        nonmember_set = prepare_generated_dataset(checkpoint_path='/home/mrp_929/projects/SeDID/logs/DDPM_CIFAR10_EPS/ckpt-step1200000_samples.pt',
-                                                  output_folder='/home/mrp_929/projects/PIA/DDPM/generated_images/cifar10',
+        synthetic_ckpt = os.environ.get(
+            'SEDID_CIFAR10_SYNTHETIC_CKPT',
+            str(PROJECT_ROOT / 'logs' / 'DDPM_CIFAR10_EPS' / 'ckpt-step1200000_samples.pt'),
+        )
+        synthetic_output = os.environ.get(
+            'SEDID_CIFAR10_SYNTHETIC_DIR',
+            str(PROJECT_ROOT / 'generated_images' / 'cifar10'),
+        )
+        nonmember_set = prepare_generated_dataset(checkpoint_path=synthetic_ckpt,
+                                                  output_folder=synthetic_output,
                                                   transforms=transforms,
                                                   nums=50000)
     elif dataset_name.upper() == 'CIFAR100':
-        splits = np.load(os.path.join(member_split_root, 'CIFAR100_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'CIFAR100_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         # load MIA Datasets
         transforms = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
-        member_set = CIFAR100( root=os.path.join(dataset_root, 'cifar100'), train=True,
+        member_set = CIFAR100( root=str(dataset_root / 'cifar100'), train=True,
                                  transform=transforms)
-        nonmember_set = MIACIFAR100(nonmember_idxs, root=os.path.join(dataset_root, 'cifar100'), train=True,
+        nonmember_set = MIACIFAR100(nonmember_idxs, root=str(dataset_root / 'cifar100'), train=True,
                                     transform=transforms)
     elif dataset_name.upper() == 'SVHN':
-        splits = np.load(os.path.join(member_split_root, 'SVHN_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'SVHN_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         # load MIA Datasets
         transforms = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
-        member_set = MIASVHN(member_idxs, root=os.path.join(dataset_root, 'svhn'), split='train',
+        member_set = MIASVHN(member_idxs, root=str(dataset_root / 'svhn'), split='train',
                              transform=transforms)
-        nonmember_set = MIASVHN(nonmember_idxs, root=os.path.join(dataset_root, 'svhn'), split='train',
+        nonmember_set = MIASVHN(nonmember_idxs, root=str(dataset_root / 'svhn'), split='train',
                                 transform=transforms)
     elif dataset_name.upper() == 'CELEBA':
-        splits = np.load(os.path.join(member_split_root, 'CELEBA_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'CELEBA_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         # load MIA Datasets
@@ -292,46 +303,54 @@ def load_member_data(dataset_name, batch_size=128, shuffle=False, randaugment=Fa
             torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor()
         ])
-        member_set = MIACelebA(member_idxs, root=os.path.join(dataset_root, 'celeba'), split='train',
+        member_set = MIACelebA(member_idxs, root=str(dataset_root / 'celeba'), split='train',
                                transform=transforms, download=True)
-        nonmember_set = MIACelebA(nonmember_idxs, root=os.path.join(dataset_root, 'celeba'), split='train',
+        nonmember_set = MIACelebA(nonmember_idxs, root=str(dataset_root / 'celeba'), split='train',
                                   transform=transforms, download=True)
     elif dataset_name.upper() == 'STL10':
-        splits = np.load(os.path.join(member_split_root, 'STL10_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'STL10_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         transforms = torchvision.transforms.Compose([
             torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor()
         ])
-        member_set = MIASTL10(member_idxs, root=os.path.join(dataset_root, 'stl10'), split='train',
+        member_set = MIASTL10(member_idxs, root=str(dataset_root / 'stl10'), split='train',
                               download=True, transform=transforms)
-        nonmember_set = MIASTL10(nonmember_idxs, root=os.path.join(dataset_root, 'stl10'), split='train',
+        nonmember_set = MIASTL10(nonmember_idxs, root=str(dataset_root / 'stl10'), split='train',
                                  download=True, transform=transforms)
     elif dataset_name.upper() == 'STL10-U':
-        splits = np.load(os.path.join(member_split_root, 'STL10_Unlabeled_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'STL10_Unlabeled_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         transforms = torchvision.transforms.Compose([
             torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor()
         ])
-        member_set = MIASTL10(member_idxs, root=os.path.join(dataset_root, 'stl10'), split='unlabeled',
+        member_set = MIASTL10(member_idxs, root=str(dataset_root / 'stl10'), split='unlabeled',
                               download=True, transform=transforms)
-        nonmember_set = MIASTL10(nonmember_idxs, root=os.path.join(dataset_root, 'stl10'), split='unlabeled',
+        nonmember_set = MIASTL10(nonmember_idxs, root=str(dataset_root / 'stl10'), split='unlabeled',
                                  download=True, transform=transforms)
     elif dataset_name.upper() == 'TINY-IN':
-        splits = np.load(os.path.join(member_split_root, 'TINY-IN_train_ratio0.5.npz'))
+        splits = np.load(member_split_root / 'TINY-IN_train_ratio0.5.npz')
         member_idxs = splits['mia_train_idxs']
         nonmember_idxs = splits['mia_eval_idxs']
         transforms = torchvision.transforms.Compose([
             torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor()
         ])
-        member_set = torchvision.datasets.ImageFolder(root='/home/mrp_929/projects/data/tiny-imagenet-200/train',
+        member_set = torchvision.datasets.ImageFolder(root=str(dataset_root / 'tiny-imagenet-200' / 'train'),
                                                        transform=transforms)
-        nonmember_set = prepare_generated_dataset(checkpoint_path='/home/mrp_929/projects/SeDID/logs/DDPM_TINY-IN_EPS/ckpt-step1200000_samples.pt',
-                                                  output_folder='/home/mrp_929/projects/PIA/DDPM/generated_images/TINY-IN',
+        synthetic_ckpt = os.environ.get(
+            'SEDID_TINYIN_SYNTHETIC_CKPT',
+            str(PROJECT_ROOT / 'logs' / 'DDPM_TINY-IN_EPS' / 'ckpt-step1200000_samples.pt'),
+        )
+        synthetic_output = os.environ.get(
+            'SEDID_TINYIN_SYNTHETIC_DIR',
+            str(PROJECT_ROOT / 'generated_images' / 'TINY-IN'),
+        )
+        nonmember_set = prepare_generated_dataset(checkpoint_path=synthetic_ckpt,
+                                                  output_folder=synthetic_output,
                                                   transforms=transforms,
                                                   nums=50000)
     else:

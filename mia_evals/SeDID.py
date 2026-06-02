@@ -4,23 +4,21 @@ import torch
 import sys
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
-
 import numpy as np
 import random
 # import lpips
 import tqdm
 
 from sklearn import metrics
-from dataset_utils import load_member_data, load_synthetic_dataset
+from mia_evals.dataset_utils import load_member_data, load_synthetic_dataset
 from torchvision.utils import make_grid
 from absl import flags
 from mia_evals.diffusion import DDIMSampler
-from model import UNet
+from mia_evals.model import UNet
 import matplotlib
 import math
 # from measures import ssim
-from dataset_utils import ReconsDataset
+from mia_evals.dataset_utils import ReconsDataset
 
 from torchvision.utils import save_image
 import torch
@@ -180,7 +178,7 @@ def calculate_auc_asr_stat(member_scores, nonmember_scores):
     total = member_scores.size(0) + nonmember_scores.size(0)
 
     min_score = min(member_scores.min(), nonmember_scores.min()).item()
-    max_score = min(member_scores.max(), nonmember_scores.max()).item()
+    max_score = max(member_scores.max(), nonmember_scores.max()).item()
     print(min_score, max_score)
 
     TPR_list = []
@@ -193,7 +191,12 @@ def calculate_auc_asr_stat(member_scores, nonmember_scores):
     TPRatFPR_01 = 0
     FPR_01_idx = 999
 
-    for threshold in torch.range(min_score, max_score, (max_score - min_score) / 1000):
+    if max_score == min_score:
+        thresholds = torch.tensor([min_score], device=member_scores.device)
+    else:
+        thresholds = torch.linspace(min_score, max_score, steps=1001, device=member_scores.device)
+
+    for threshold in thresholds:
         acc = ((member_scores >= threshold).sum() + (nonmember_scores < threshold).sum()) / total
 
         TP = (member_scores >= threshold).sum()
@@ -279,13 +282,15 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
 
 if __name__ == '__main__':
     fix_seed()
-    ckpt = os.path.join('/home/kongfei/models_state_dict/mia_shixiong/ckpt-step800000.pt')
-    flag_path = os.path.join("/home/kongfei/models_state_dict/mia_shixiong/flagfile.txt")
+    ckpt = os.environ.get('SEDID_CKPT')
+    flag_path = os.environ.get('SEDID_FLAGFILE')
+    if not ckpt or not flag_path:
+        raise ValueError('Set SEDID_CKPT and SEDID_FLAGFILE to run the standalone SeDID script.')
     # flag_path = os.path.join(exp_root, 'flagfile.txt')
-    device = 'cuda'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     FLAGS = get_FLAGS(flag_path)
     FLAGS(sys.argv)
     FLAGS.mean_type = 'eps_xt_xt-1'
     FLAGS.T = 1000
-    model = get_model(ckpt, FLAGS, WA=True).to('cuda')
+    model = get_model(ckpt, FLAGS, WA=True).to(device)
     secmi_stat(model, FLAGS)

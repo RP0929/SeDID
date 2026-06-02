@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import random
 
-import resnet
+from mia_evals import resnet
 from sklearn import metrics
 
 

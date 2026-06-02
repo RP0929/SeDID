@@ -1,0 +1,7 @@
+absl-py>=2.0
+numpy
+scikit-learn
+torch
+torchvision
+tqdm
+

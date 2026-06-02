@@ -46,7 +46,7 @@ class GaussianDiffusionTrainer(nn.Module):
 class GaussianDiffusionSampler(nn.Module):
     def __init__(self, model, beta_1, beta_T, T, img_size=32,
                  mean_type='eps', var_type='fixedlarge'):
-        assert mean_type in ['xprev' 'xstart', 'epsilon', 'eps_xt_xt-1']
+        assert mean_type in ['xprev', 'xstart', 'epsilon', 'eps_xt_xt-1']
         assert var_type in ['fixedlarge', 'fixedsmall']
         super().__init__()
 
@@ -187,7 +187,7 @@ class GaussianDiffusionSampler(nn.Module):
 class DDIMSampler(nn.Module):
     def __init__(self, model, beta_1, beta_T, T, eta, n_step=None, img_size=32,
                  mean_type='eps', var_type='fixedlarge'):
-        assert mean_type in ['xprev' 'xstart', 'epsilon', 'eps_xt_xt-1']
+        assert mean_type in ['xprev', 'xstart', 'epsilon', 'eps_xt_xt-1']
         assert var_type in ['fixedlarge', 'fixedsmall']
         super().__init__()
 

@@ -1,55 +1,107 @@
-# README for Exposing the Fake: Effective Diffusion-Generated Images Detection
+# SeDID
 
-This repository contains the code associated with the research paper "Exposing the Fake: Effective Diffusion-Generated Images Detection".
+Code for the paper "Exposing the Fake: Effective Diffusion-Generated Images Detection" (AdvML Frontiers Workshop at ICML 2023).
 
-## Requirements
+This repository contains:
 
-- Python version 3.9.1
-- PyTorch version 2.0.0
+- `main.py`: training and evaluation entrypoint for DDPM backbones used by the paper
+- `mia_evals/SeDID.py`: statistical SeDID detector
+- `mia_evals/SeDID_nn.py`: neural-network post-processor utilities for SeDID features
 
-Ensure that you are running these versions of Python and PyTorch. If you need to install PyTorch, please follow the official installation instructions at https://pytorch.org.
+## Environment
 
-## Files Description
+The original project was written around Python 3.9 and PyTorch 2.0, but the maintenance fixes in this repository also work with newer PyTorch environments.
 
-The code is organized as follows:
+Install the basic dependencies with:
 
-- `mia_evals\main.py`: The main script to train the diffusion model. The main tasks are defined here, including training and evaluation. Use the `--train` flag for training and the `--eval` flag for evaluation.
-
-- `mia_evals\SeDID_my_details.py`: The script to launch the Stepwise Error for Diffusion-generated Image Detection (SeDID) detection method. 
-
-- The `mia_evals` directory contains the following additional scripts:
-  - `attack_naive_rand.py`: Implements the naive random attack method.
-  - `attack_sum.py`: Implements the summation attack method.
-  - `components.py`: Contains various components used across the project.
-  - `count.py`: Implements the count method.
-  - `dataset_utils.py`: Contains utilities for handling datasets.
-  - `diffusion.py`: Contains the implementation of the diffusion process.
-  - `load_plk.py`: Utilities for loading pickle files.
-  - `load.py`: Contains various loading utilities.
-  - `model.py`: Contains the model architecture and related functions.
-  - `resnet.py`: Contains the ResNet model implementation.
-  - `SeDID_my_details.py`: The main script for the SeDID method.
-  - `SeDID_nn.py`: The script for the SeDID method with neural networks.
-  - `SeDID.py`: The main script for the SeDID method.
-
-## Usage
-
-To train the diffusion model, run:
-
-```python
-python mia_evals\main.py --train
+```bash
+pip install -r requirements.txt
 ```
 
-To evaluate the model, run:
+If `tensorboardX` is not installed, `main.py` will fall back to `torch.utils.tensorboard`.
 
-```python
-python mia_evals\main.py --eval
+## Dataset Layout
+
+By default, the project looks for datasets under:
+
+```text
+./datasets
 ```
 
-To launch the SeDID detection method, run:
+Examples:
 
-```python
-python mia_evals\SeDID_my_details.py
+- `./datasets/cifar10`
+- `./datasets/cifar100`
+- `./datasets/celeba`
+- `./datasets/svhn`
+- `./datasets/stl10`
+- `./datasets/tiny-imagenet-200/train`
+
+Member split files are stored in:
+
+```text
+./mia_evals/member_splits
 ```
 
-Note: Make sure you are in the right Python environment and have all the necessary dependencies installed.
+You can override paths with environment variables when needed:
+
+```bash
+export SEDID_DATASET_ROOT=/path/to/datasets
+export SEDID_MEMBER_SPLIT_ROOT=/path/to/member_splits
+```
+
+For synthetic non-member samples used by `mia_evals/dataset_utils.py`, you can also override:
+
+```bash
+export SEDID_CIFAR10_SYNTHETIC_CKPT=/path/to/ckpt-step1200000_samples.pt
+export SEDID_CIFAR10_SYNTHETIC_DIR=/path/to/generated_images/cifar10
+export SEDID_TINYIN_SYNTHETIC_CKPT=/path/to/ckpt-step1200000_samples.pt
+export SEDID_TINYIN_SYNTHETIC_DIR=/path/to/generated_images/TINY-IN
+```
+
+## Training
+
+Train a DDPM model:
+
+```bash
+python main.py --train --dataset CIFAR10 --logdir ./logs/DDPM_CIFAR10_EPS
+```
+
+The helper script `train.sh` shows one minimal example.
+
+## Evaluation
+
+Evaluate a saved checkpoint:
+
+```bash
+python main.py --eval --dataset CIFAR10 --img_size 32 --logdir ./logs/DDPM_CIFAR10_EPS
+```
+
+`main.py` currently expects the checkpoint file name `ckpt-step800000.pt` inside `--logdir`, matching the original project convention.
+
+## Running SeDID
+
+The standalone statistical script requires the checkpoint path and training flagfile path:
+
+```bash
+export SEDID_CKPT=/path/to/ckpt-step800000.pt
+export SEDID_FLAGFILE=/path/to/flagfile.txt
+python -m mia_evals.SeDID
+```
+
+The neural post-processor utilities can be imported from:
+
+```python
+from mia_evals.SeDID_nn import run_NNs
+```
+
+## Maintenance Notes
+
+This repository has been lightly maintained to improve reproducibility:
+
+- fixed package import paths so module entrypoints run more reliably
+- removed several machine-specific default paths from the main workflow
+- fixed a threshold-range bug in `mia_evals/SeDID.py`
+- added a minimal dependency file and ignored Python cache artifacts
+
+The paper-specific experiment scripts under `mia_evals/secmia_my_details*.py` still contain historical hard-coded experiment paths and are best treated as archival scripts unless you adapt them to your environment.
