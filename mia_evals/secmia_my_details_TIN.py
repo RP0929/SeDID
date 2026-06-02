@@ -4,23 +4,23 @@ import torch
 import sys
 import os
 
-import SeDID_nn
-os.environ["CUDA_VISIBLE_DEVICES"] = '4'
+from mia_evals import SeDID_nn
 import numpy as np
 import random
 # import lpips
 import tqdm
 
 from sklearn import metrics
-from dataset_utils import load_member_data, load_synthetic_dataset
+from mia_evals.dataset_utils import load_member_data, load_synthetic_dataset
 from torchvision.utils import make_grid
 from absl import flags
-from diffusion import DDIMSampler
-from model import UNet
+from mia_evals.diffusion import DDIMSampler
+from mia_evals.model import UNet
 import matplotlib
 import math
 # from measures import ssim
-from dataset_utils import ReconsDataset
+from mia_evals.dataset_utils import ReconsDataset
+from mia_evals.secmia_common import DEFAULT_DEVICE, dataset_root, experiment_paths, score_thresholds
 
 from torchvision.utils import save_image
 import torch
@@ -56,7 +56,7 @@ def get_FLAGS(flag_path):
     flags.DEFINE_float('beta_1', 1e-4, help='start beta value')
     flags.DEFINE_float('beta_T', 0.02, help='end beta value')
     flags.DEFINE_integer('T', 1000, help='total diffusion steps')
-    flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon'], help='predict variable')
+    flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon', 'eps_xt_xt-1'], help='predict variable')
     flags.DEFINE_enum('var_type', 'fixedlarge', ['fixedlarge', 'fixedsmall'], help='variance type')
     # Training
     flags.DEFINE_float('lr', 2e-4, help='target learning rate')
@@ -246,7 +246,8 @@ def calculate_auc_acc_asr_stat(member_scores, nonmember_scores):
     TPRatFPR_1 = 0
     TPRatFPR_01 = 0
 
-    for threshold in torch.arange(min_score, max_score, (max_score - min_score) / 1000):
+    _, _, thresholds = score_thresholds(member_scores, nonmember_scores)
+    for threshold in thresholds:
         TP = (member_scores >= threshold).sum().item()
         TN = (nonmember_scores < threshold).sum().item()
         FP = (nonmember_scores >= threshold).sum().item()
@@ -280,7 +281,7 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
     ddim_forward_step = [target_steps, [0] + target_steps[:-1]]
     ddim_gen_step = [list(reversed(target_steps)), list(reversed(target_steps[:-1])) + [0]]
 
-    dataset = torchvision.datasets.ImageFolder(root='/home/mrp_929/projects/data/tiny-imagenet-200/train',
+    dataset = torchvision.datasets.ImageFolder(root=dataset_root('tiny-imagenet-200', 'train'),
                                                        transform=transforms)
     # 选择前50000个数据
     dataset = Subset(dataset, range(50000))
@@ -295,7 +296,7 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
         all_internal_diffusions = []  # 收集所有批次的逆向结果
         all_internal_samples = []  # 收集所有批次的去噪结果
         for batch_idx, x in tqdm.tqdm(enumerate(data_loader)):
-            x = x[0].cuda()
+            x = x[0].to(device)
             x = x * 2 - 1
             x_T, internal_diffusions = ddim_reverse(model, x, beta_1=FLAGS.beta_1, beta_T=FLAGS.beta_T, T=FLAGS.T,
                                                     steps=ddim_reverse_step, return_intermediate=True)
@@ -345,19 +346,26 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
 
 if __name__ == '__main__':
     fix_seed()
-    ckpt = os.path.join('/home/mrp_929/projects/SeDID/logs/DDPM_TINY-IN_EPS/ckpt-step1200000.pt')
+    experiment = experiment_paths(
+        'DDPM_TINY-IN_EPS',
+        'ckpt-step1200000.pt',
+        'ckpt-step1200000_samples.pt',
+        'DDPM_TINY-IN',
+        flagfile_candidates=('flagfile_TINY-IN.txt', 'flagfile.txt'),
+    )
+    ckpt = experiment['ckpt']
     transforms = torchvision.transforms.Compose([
             torchvision.transforms.Resize(32),
             torchvision.transforms.ToTensor(),
     ])
-    flag_path = os.path.join("/home/mrp_929/projects/SeDID/logs/DDPM_TINY-IN_EPS/flagfile_TINY-IN.txt")
-    ckpt_path = '/home/mrp_929/projects/SeDID/logs/DDPM_TINY-IN_EPS/ckpt-step1200000_samples.pt'
-    output_folder_path = 'generated_images/DDPM_TINY-IN'
-    device = 'cuda'
+    flag_path = experiment['flag_path']
+    ckpt_path = experiment['ckpt_sample_path']
+    output_folder_path = experiment['output_folder_path']
+    device = DEFAULT_DEVICE
     FLAGS = get_FLAGS(flag_path)
     FLAGS(sys.argv)
     FLAGS.mean_type = 'eps_xt_xt-1'
     FLAGS.T = 1000
-    model = get_model(ckpt, FLAGS, WA=True).to('cuda')
+    model = get_model(ckpt, FLAGS, WA=True).to(device)
     generated_loader = prepare_generated_data_loader(ckpt_path, output_folder_path, transforms, batch_size=128)
     secmi_stat(model, FLAGS)

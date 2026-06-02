@@ -4,23 +4,23 @@ import torch
 import sys
 import os
 
-import SeDID_nn
-os.environ["CUDA_VISIBLE_DEVICES"] = '5'
+from mia_evals import SeDID_nn
 import numpy as np
 import random
 # import lpips
 import tqdm
 
 from sklearn import metrics
-from dataset_utils import load_member_data, load_synthetic_dataset
+from mia_evals.dataset_utils import load_member_data, load_synthetic_dataset
 from torchvision.utils import make_grid
 from absl import flags
-from diffusion import DDIMSampler
+from mia_evals.diffusion import DDIMSampler
 from mia_evals.model import UNet
 import matplotlib
 import math
 # from measures import ssim
-from dataset_utils import ReconsDataset
+from mia_evals.dataset_utils import ReconsDataset
+from mia_evals.secmia_common import DEFAULT_DEVICE, dataset_root, experiment_paths, score_thresholds
 
 from torchvision.utils import save_image
 import torch
@@ -55,7 +55,7 @@ def get_FLAGS(flag_path):
     flags.DEFINE_float('beta_1', 1e-4, help='start beta value')
     flags.DEFINE_float('beta_T', 0.02, help='end beta value')
     flags.DEFINE_integer('T', 1000, help='total diffusion steps')
-    flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon'], help='predict variable')
+    flags.DEFINE_enum('mean_type', 'epsilon', ['xprev', 'xstart', 'epsilon', 'eps_xt_xt-1'], help='predict variable')
     flags.DEFINE_enum('var_type', 'fixedlarge', ['fixedlarge', 'fixedsmall'], help='variance type')
     # Training
     flags.DEFINE_float('lr', 2e-4, help='target learning rate')
@@ -78,9 +78,10 @@ def get_FLAGS(flag_path):
     flags.DEFINE_bool('fid_use_torch', False, help='calculate IS and FID on gpu')
     flags.DEFINE_string('fid_cache', './stats/STL10_U.train.npz', help='FID cache')
     #SeDID
-    flags.DEFINE_string('ckpt_sample_path', '/home/mrp_929/projects/SeDID/logs/DDPM_STL10_U_EPS/ckpt-step1190000_samples.pt', help='ckpt_sample_path')
-    flags.DEFINE_string('output_folder_path', 'generated_images/DDPM_STL10_U', help='FID cache')
-    flags.DEFINE_string('ckpt', '/home/mrp_929/projects/SeDID/logs/DDPM_STL10_U_EPS/ckpt-step80000.pt', help='FID cache')
+    experiment = experiment_paths('DDPM_STL10_U_EPS', 'ckpt-step80000.pt', 'ckpt-step1190000_samples.pt', 'DDPM_STL10_U')
+    flags.DEFINE_string('ckpt_sample_path', experiment['ckpt_sample_path'], help='ckpt_sample_path')
+    flags.DEFINE_string('output_folder_path', experiment['output_folder_path'], help='FID cache')
+    flags.DEFINE_string('ckpt', experiment['ckpt'], help='FID cache')
     
     FLAGS.read_flags_from_files(flag_path)
     return FLAGS
@@ -241,7 +242,7 @@ def calculate_auc_asr_stat(member_scores, nonmember_scores):
     total = member_scores.size(0) + nonmember_scores.size(0)
 
     min_score = min(member_scores.min(), nonmember_scores.min()).item()
-    max_score = min(member_scores.max(), nonmember_scores.max()).item()
+    max_score = max(member_scores.max(), nonmember_scores.max()).item()
     print(min_score, max_score)
 
     TPR_list = []
@@ -254,7 +255,8 @@ def calculate_auc_asr_stat(member_scores, nonmember_scores):
     TPRatFPR_01 = 0
     FPR_01_idx = 999
 
-    for threshold in torch.arange(min_score, max_score, (max_score - min_score) / 1000):
+    _, _, thresholds = score_thresholds(member_scores, nonmember_scores)
+    for threshold in thresholds:
         acc = ((member_scores >= threshold).sum() + (nonmember_scores < threshold).sum()) / total
 
         TP = (member_scores >= threshold).sum()
@@ -309,7 +311,7 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
         torchvision.transforms.ToTensor(),
     ])
     
-    real_dataset = torchvision.datasets.STL10(root='/home/mrp_929/projects/SeDID/datasets', split='unlabeled',download=True, transform=transforms)
+    real_dataset = torchvision.datasets.STL10(root=dataset_root('stl10'), split='unlabeled',download=True, transform=transforms)
     real_dataset = Subset(real_dataset, range(50000))
     real_loader = DataLoader(real_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     generated_set = prepare_generated_dataset(FLAGS.ckpt_sample_path, FLAGS.output_folder_path, transforms, batch_size=128)
@@ -323,7 +325,7 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
         all_internal_diffusions = []  # 收集所有批次的逆向结果
         all_internal_samples = []  # 收集所有批次的去噪结果
         for batch_idx, x in tqdm.tqdm(enumerate(data_loader)):
-            x = x[0].cuda()
+            x = x[0].to(device)
             x = x * 2 - 1
             x_T, internal_diffusions = ddim_reverse(model, x, beta_1=FLAGS.beta_1, beta_T=FLAGS.beta_T, T=FLAGS.T,
                                                     steps=ddim_reverse_step, return_intermediate=True)
@@ -372,13 +374,13 @@ def secmi_stat(model, FLAGS, batch_size=128, score_type='mse'):
 
 if __name__ == '__main__':
     fix_seed()
-    flag_path = os.path.join("/home/mrp_929/projects/SeDID/STL10_U/flagfile.txt")
-    device = 'cuda'
+    flag_path = experiment['flag_path']
+    device = DEFAULT_DEVICE
     FLAGS = get_FLAGS(flag_path)
     FLAGS(sys.argv)
     FLAGS.mean_type = 'eps_xt_xt-1'
     FLAGS.T = 1000
-    model = get_model(FLAGS.ckpt, FLAGS, WA=True).to('cuda')
+    model = get_model(FLAGS.ckpt, FLAGS, WA=True).to(device)
     
     secmi_stat(model, FLAGS)
     
